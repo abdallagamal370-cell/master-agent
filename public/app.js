@@ -285,50 +285,62 @@ async function renderCourse(seq, id) {
     input.value = '';
   };
 
-  function uploadFiles(files) {
+  async function uploadFiles(files) {
     if (!files.length || dz.classList.contains('busy')) return;
-    const fd = new FormData();
-    files.forEach((f) => fd.append('files', f, f.name));
-    fd.append('lang', getLang());
-    fd.append('auto', $('#auto-sum').checked ? '1' : '0');
     const prog = $('#dz-progress');
     const bar = $('.bar', prog);
     const label = $('span', prog);
     prog.hidden = false;
     dz.classList.add('busy');
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `/api/courses/${id}/documents`);
-    xhr.upload.onprogress = (e) => {
-      if (!e.lengthComputable) return;
-      const p = Math.round((e.loaded / e.total) * 100);
-      bar.style.width = `${p}%`;
-      label.textContent = p < 100 ? t('uploading', { p }) : t('processing');
-    };
-    xhr.onloadend = async () => {
+    const results = [];
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const fd = new FormData();
+        fd.append('files', file, file.name);
+        fd.append('lang', getLang());
+        fd.append('auto', $('#auto-sum').checked ? '1' : '0');
+        label.textContent = files.length > 1 ? `${i + 1}/${files.length} · ${t('processing')}` : t('processing');
+        const result = await new Promise((resolve) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', `/api/courses/${id}/documents`);
+          xhr.upload.onprogress = (e) => {
+            if (!e.lengthComputable) return;
+            const p = Math.round(((i + e.loaded / e.total) / files.length) * 100);
+            bar.style.width = `${p}%`;
+            label.textContent = t('uploading', { p });
+          };
+          xhr.onloadend = () => {
+            let data = {};
+            try {
+              data = JSON.parse(xhr.responseText);
+            } catch {
+              /* empty */
+            }
+            if (xhr.status === 200) resolve(data.results?.[0] || { ok: false, name: file.name, error: 'Empty upload response.' });
+            else resolve({ ok: false, name: file.name, error: data.error || `Upload failed (${xhr.status || 'network error'}).` });
+          };
+          xhr.send(fd);
+        });
+        results.push(result);
+      }
+    } finally {
       dz.classList.remove('busy');
       prog.hidden = true;
       bar.style.width = '0';
-      let data = {};
-      try {
-        data = JSON.parse(xhr.responseText);
-      } catch {
-        /* empty */
-      }
-      if (xhr.status !== 200) return toast(data.error || `Upload failed (${xhr.status})`, 'error');
-      const ok = data.results.filter((r) => r.ok);
-      const bad = data.results.filter((r) => !r.ok);
-      if (ok.length) toast(t('uploadedN', { n: ok.length }), 'success');
-      bad.forEach((r) => toast(t('uploadFailed', { name: r.name, error: r.error }), 'error'));
-      if (seq === viewSeq) {
-        const fresh = await api(`/api/courses/${id}`);
-        state.course = fresh;
-        state.concepts = null;
-        $('[data-tab="docs"]', main).textContent = `${t('documents')} (${fresh.documents.length})`;
-        drawBody();
-        renderSidebar();
-      }
-    };
-    xhr.send(fd);
+    }
+    const ok = results.filter((r) => r.ok);
+    const bad = results.filter((r) => !r.ok);
+    if (ok.length) toast(t('uploadedN', { n: ok.length }), 'success');
+    bad.forEach((r) => toast(t('uploadFailed', { name: r.name, error: r.error }), 'error'));
+    if (seq === viewSeq) {
+      const fresh = await api(`/api/courses/${id}`);
+      state.course = fresh;
+      state.concepts = null;
+      $('[data-tab="docs"]', main).textContent = `${t('documents')} (${fresh.documents.length})`;
+      drawBody();
+      renderSidebar();
+    }
   }
 
   // Tabs

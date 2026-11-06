@@ -4,7 +4,6 @@
 import express from 'express';
 import multer from 'multer';
 import path from 'node:path';
-import { exec } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as store from './lib/store.js';
 import { extractDocument } from './lib/extract.js';
@@ -12,10 +11,8 @@ import { testConnection, listModels, pickRecommendedModel, withModelFallback } f
 import * as queue from './lib/queue.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.PORT) || 3210;
-const HOST = process.env.HOST || '127.0.0.1';
 const LANGS = ['en', 'ar'];
-const MAX_FILE_MB = 150;
+const MAX_FILE_MB = process.env.VERCEL ? 4 : 150;
 
 const app = express();
 app.disable('x-powered-by');
@@ -137,7 +134,7 @@ app.get('/api/courses/:id/concepts', async (req, res) => {
 
 // ---------- Documents ----------
 
-app.post('/api/courses/:id/documents', upload.array('files', 30), async (req, res) => {
+app.post('/api/courses/:id/documents', upload.array('files', process.env.VERCEL ? 1 : 30), async (req, res) => {
   const course = await store.getCourse(req.params.id);
   if (!course) throw httpError(404, 'Course not found.');
   const lang = pickLang(req.body.lang);
@@ -194,7 +191,12 @@ app.post('/api/documents/:id/summarize', async (req, res) => {
 app.get('/api/documents/:id/file', async (req, res) => {
   const doc = await store.getDocument(req.params.id);
   if (!doc) throw httpError(404, 'Document not found.');
-  res.download(store.uploadPath(doc), doc.name);
+  if (store.REMOTE_STORAGE) {
+    const buffer = await store.getUploadBuffer(doc);
+    res.attachment(doc.name).send(buffer);
+  } else {
+    res.download(store.uploadPath(doc), doc.name);
+  }
 });
 
 app.delete('/api/documents/:id', async (req, res) => {
@@ -220,12 +222,19 @@ app.use((err, req, res, next) => {
 
 // ---------- Start ----------
 
-app.listen(PORT, HOST, async () => {
-  const url = `http://localhost:${PORT}`;
-  console.log(`\n  Master Study Hub is running at ${url}\n  Data folder: ${store.DATA_DIR}\n  Press Ctrl+C to stop.\n`);
-  await queue.resume().catch((e) => console.error('Queue resume failed:', e.message));
-  if (process.argv.includes('--open')) {
-    const cmd = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open ${url}` : `xdg-open ${url}`;
-    exec(cmd);
-  }
-});
+if (!process.env.VERCEL) {
+  const PORT = Number(process.env.PORT) || 3210;
+  const HOST = process.env.HOST || '127.0.0.1';
+  app.listen(PORT, HOST, async () => {
+    const url = `http://localhost:${PORT}`;
+    console.log(`\n  Master Study Hub is running at ${url}\n  Data folder: ${store.DATA_DIR}\n  Press Ctrl+C to stop.\n`);
+    await queue.resume().catch((e) => console.error('Queue resume failed:', e.message));
+    if (process.argv.includes('--open')) {
+      const { exec } = await import('node:child_process');
+      const cmd = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open ${url}` : `xdg-open ${url}`;
+      exec(cmd);
+    }
+  });
+}
+
+export default app;

@@ -1,6 +1,6 @@
 # 🎓 Master Study Hub
 
-A local AI study companion for master's students in Software Engineering.
+A web-based AI study companion for master's students in Software Engineering.
 Upload your course **PPTX** slides and **PDF** files and get a master-level **study guide** for each one, in **English or Arabic**:
 
 - **Overview**: what the material covers and how the ideas connect
@@ -10,7 +10,7 @@ Upload your course **PPTX** slides and **PDF** files and get a master-level **st
 - **Course glossary**: every key concept across all documents of a course, searchable
 - **Source view**: the extracted text of every slide/page, including speaker notes. Click any reference chip to jump there.
 
-Everything runs on your PC. Only the document text is sent to Google Gemini when a study guide is generated.
+When run locally, data is stored on your PC. When deployed to Vercel, data is stored in a private Supabase project. Only document text is sent to Google Gemini when a study guide is generated.
 
 ## Quick start (Windows)
 
@@ -27,6 +27,21 @@ npm start        # opens the browser
 npm test         # extraction tests
 ```
 
+## Vercel deployment
+
+Vercel's serverless filesystem is temporary, so a deployed app needs Supabase for durable data. Create a Supabase project, open its SQL Editor, and run [`supabase/schema.sql`](supabase/schema.sql). In Vercel, import this repository and add these environment variables:
+
+| Variable | Value |
+|---|---|
+| `SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service-role key; keep it server-side |
+| `GEMINI_API_KEY` | Optional shared Gemini key; users may also configure a key in Settings |
+| `GEMINI_MODEL` | Optional model override; defaults to `gemini-flash-latest` |
+
+Redeploy after setting the variables. Supabase stores course metadata, extracted pages, summaries, and settings in Postgres; originals are stored in a private Storage bucket. RLS is enabled and no public policies are created. Vercel uploads are limited to one file of 4 MB per request because of the platform request-body limit; local uploads keep the 150 MB limit. Background summary work is limited by Vercel's function duration (configured to 60 seconds).
+
+This app is designed for one owner's private workspace, not anonymous public use: its API has no user accounts and its configured Gemini key is shared by the deployment. Enable Vercel Deployment Protection (or put equivalent authentication in front of the site) before storing private documents or adding a Gemini key. Never expose the Supabase service-role key in browser code.
+
 ## Configuration
 
 | Setting | Where | Default |
@@ -34,7 +49,7 @@ npm test         # extraction tests
 | Gemini API key | Settings page, or `GEMINI_API_KEY` env var | – |
 | Model | Settings page, or `GEMINI_MODEL` env var | `gemini-flash-latest` |
 | Port | `PORT` env var | `3210` |
-| Data folder | `STUDY_DATA_DIR` env var | `./data` |
+| Data folder (local only) | `STUDY_DATA_DIR` env var | `./data` |
 
 Click **Detect best model** in Settings to choose from the models your key can actually use. If Google retires the
 configured model, the app switches to the newest available Flash model automatically and saves it.
@@ -44,17 +59,19 @@ Pick a "pro" model for deeper explanations (slower, with tighter free-tier limit
 
 - Old `.ppt` files: open them in PowerPoint and *Save As* `.pptx`.
 - Scanned PDFs (images without text, up to 18 MB) are sent to Gemini as a file so it can read them with OCR.
-- Your data (originals, extracted text, study guides, API key) lives in `data/`. Back up this folder to keep your library.
+- Locally, your data (originals, extracted text, study guides, API key) lives in `data/`. Back up this folder to keep your library. In a Vercel deployment, this data lives in Supabase.
 
 ## Project structure
 
 ```
-server.js           Express server + REST API
+server.js           Express server + REST API (local and Vercel)
+api/index.js        Vercel serverless entry point
 lib/extract.js      PPTX/PDF text extraction (per slide/page, with speaker notes)
 lib/summarize.js    Study-guide prompt + JSON schema for Gemini
 lib/gemini.js       Minimal Gemini REST client with retries
 lib/queue.js        Sequential background generation queue
-lib/store.js        JSON/file storage in data/
+lib/store.js        Local storage or Supabase-backed storage
+supabase/schema.sql Supabase tables and private Storage bucket
 public/             Frontend (vanilla JS, English/Arabic with RTL)
 test/               Extraction tests
 ```
